@@ -63,7 +63,15 @@ class CloudDatabaseVolume(object):
         """
         return getattr(self, att)
 
-
+class CloudDatabaseSpec(object):
+    """
+    This class holds information on the type of cloud database to be created
+    during an HA create operation
+    """
+    def __init__(self, name, volume, flavor):
+        self.name = name
+        self.volume = volume
+        self.flavor = flavor
 
 class CloudDatabaseManager(BaseManager):
     """
@@ -103,6 +111,16 @@ class CloudDatabaseManager(BaseManager):
                 "users": users,
                 }}
 
+        _check_type_and_version(body, type, version)
+
+        return body
+
+    def _check_type_and_version(self, body, type, version):
+        """
+        Makes sure that for database creation statements the database
+        type and version are specified and then inserts them into the
+        datastore parameter
+        """
         if type is not None or version is not None:
             required = (type, version)
             if all(required):
@@ -110,8 +128,42 @@ class CloudDatabaseManager(BaseManager):
             else:
                 raise exc.MissingCloudDatabaseParameter("Specifying a datastore"
                     " requires both the datastore type as well as the version.")
-        return body
 
+    def create_ha(self, name, type, version, replica_source, replicas):
+        """
+        Creates a new highly available database instance
+        """
+        source_flavor_ref = self.api._get_flavor_ref(replica_source.flavor)
+
+        body = {"ha": {
+                "name": name,
+                "replica_source": [
+                    {
+                        "volume": {
+                            "size": replica_source.size
+                        },
+                        "flavorRef": source_flavor_ref,
+                        "name": replica_source.name
+                    }
+                ],
+                "replicas": []
+                }}
+
+        for replica in replicas:
+            replica_flavor_ref = self.api._get_flavor_ref(replica.flavor)
+            body.replicas.append(
+                {
+                    "volume": {
+                        "size": replica.size
+                    },
+                    "flavorRef": replica_flavor_ref,
+                    "name": replica.name
+                }
+            )
+
+        uri = "/ha"
+        resp, resp_body = self.api.method_post(uri, body=body)
+        return CloudDatabaseHAInstance(mgr, body.get("ha_instance"))
 
     def create_backup(self, instance, name, description=None):
         """
@@ -671,6 +723,12 @@ class CloudDatabaseBackup(BaseResource):
     get_details = True
     _non_display = ["locationRef"]
 
+
+class CloudDatabaseHAInstance(BaseResource):
+    """
+    This class represents an HA cloud database instance
+    """
+    get_details = False
 
 
 class CloudDatabaseClient(BaseClient):
