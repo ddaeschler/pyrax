@@ -36,6 +36,19 @@ def assure_instance(fnc):
         return fnc(self, instance, *args, **kwargs)
     return _wrapped
 
+def check_type_and_version(body, type, version):
+    """
+    Makes sure that for database creation statements the database
+    type and version are specified and then inserts them into the
+    datastore parameter
+    """
+    if type is not None or version is not None:
+        required = (type, version)
+        if all(required):
+            body['datastore'] = {"type": type, "version": version}
+        else:
+            raise exc.MissingCloudDatabaseParameter("Specifying a datastore"
+                " requires both the datastore type as well as the version.")
 
 
 class CloudDatabaseVolume(object):
@@ -106,14 +119,9 @@ class CloudDatabaseHAManager(BaseManager):
                 }
             )
 
-        self._check_type_and_version(body['ha'], type, version)
+        check_type_and_version(body['ha'], type, version)
 
-        uri = "/ha"
-        resp, resp_body = self.api.method_post(uri, body=body)
-        print resp
-        print resp_body
-
-        return CloudDatabaseHAInstance(self, body.get("ha_instance", {}))
+        return body
 
 class CloudDatabaseManager(BaseManager):
     """
@@ -153,24 +161,9 @@ class CloudDatabaseManager(BaseManager):
                 "users": users,
                 }}
 
-        self._check_type_and_version(body['instance'], type, version)
+        check_type_and_version(body['instance'], type, version)
 
         return body
-
-    def _check_type_and_version(self, body, type, version):
-        """
-        Makes sure that for database creation statements the database
-        type and version are specified and then inserts them into the
-        datastore parameter
-        """
-        if type is not None or version is not None:
-            required = (type, version)
-            if all(required):
-                body['datastore'] = {"type": type, "version": version}
-            else:
-                raise exc.MissingCloudDatabaseParameter("Specifying a datastore"
-                    " requires both the datastore type as well as the version.")
-
 
     def create_backup(self, instance, name, description=None):
         """
