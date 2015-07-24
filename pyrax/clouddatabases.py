@@ -73,6 +73,48 @@ class CloudDatabaseSpec(object):
         self.volume = volume
         self.flavor = flavor
 
+class CloudDatabaseHAManager(BaseManager):
+    def _create_body(self, name, type, version, replica_source, replicas):
+        """
+        Creates a new highly available database instance
+        """
+        source_flavor_ref = self.api._get_flavor_ref(replica_source.flavor)
+
+        body = {"ha": {
+                "name": name,
+                "replica_source": [
+                    {
+                        "volume": {
+                            "size": replica_source.volume
+                        },
+                        "flavorRef": source_flavor_ref,
+                        "name": replica_source.name
+                    }
+                ],
+                "replicas": []
+                }}
+
+        for replica in replicas:
+            replica_flavor_ref = self.api._get_flavor_ref(replica.flavor)
+            body['ha']['replicas'].append(
+                {
+                    "volume": {
+                        "size": replica.volume
+                    },
+                    "flavorRef": replica_flavor_ref,
+                    "name": replica.name
+                }
+            )
+
+        self._check_type_and_version(body['ha'], type, version)
+
+        uri = "/ha"
+        resp, resp_body = self.api.method_post(uri, body=body)
+        print resp
+        print resp_body
+
+        return CloudDatabaseHAInstance(self, body.get("ha_instance", {}))
+
 class CloudDatabaseManager(BaseManager):
     """
     This class manages communication with Cloud Database instances.
@@ -111,7 +153,7 @@ class CloudDatabaseManager(BaseManager):
                 "users": users,
                 }}
 
-        _check_type_and_version(body, type, version)
+        self._check_type_and_version(body['instance'], type, version)
 
         return body
 
@@ -124,46 +166,11 @@ class CloudDatabaseManager(BaseManager):
         if type is not None or version is not None:
             required = (type, version)
             if all(required):
-                body['instance']['datastore'] = {"type": type, "version": version}
+                body['datastore'] = {"type": type, "version": version}
             else:
                 raise exc.MissingCloudDatabaseParameter("Specifying a datastore"
                     " requires both the datastore type as well as the version.")
 
-    def create_ha(self, name, type, version, replica_source, replicas):
-        """
-        Creates a new highly available database instance
-        """
-        source_flavor_ref = self.api._get_flavor_ref(replica_source.flavor)
-
-        body = {"ha": {
-                "name": name,
-                "replica_source": [
-                    {
-                        "volume": {
-                            "size": replica_source.size
-                        },
-                        "flavorRef": source_flavor_ref,
-                        "name": replica_source.name
-                    }
-                ],
-                "replicas": []
-                }}
-
-        for replica in replicas:
-            replica_flavor_ref = self.api._get_flavor_ref(replica.flavor)
-            body.replicas.append(
-                {
-                    "volume": {
-                        "size": replica.size
-                    },
-                    "flavorRef": replica_flavor_ref,
-                    "name": replica.name
-                }
-            )
-
-        uri = "/ha"
-        resp, resp_body = self.api.method_post(uri, body=body)
-        return CloudDatabaseHAInstance(mgr, body.get("ha_instance"))
 
     def create_backup(self, instance, name, description=None):
         """
@@ -389,6 +396,13 @@ class CloudDatabaseBackupManager(BaseManager):
         return self.api._manager._list_backups_for_instance(instance, limit=limit,
                                                             marker=marker)
 
+
+class CloudDatabaseHAInstance(BaseResource):
+    """
+    This class represents an HA MySQL instance in the cloud.
+    """
+    def __init__(self, *args, **kwargs):
+        super(CloudDatabaseHAInstance, self).__init__(*args, **kwargs)
 
 
 class CloudDatabaseInstance(BaseResource):
@@ -724,13 +738,6 @@ class CloudDatabaseBackup(BaseResource):
     _non_display = ["locationRef"]
 
 
-class CloudDatabaseHAInstance(BaseResource):
-    """
-    This class represents an HA cloud database instance
-    """
-    get_details = False
-
-
 class CloudDatabaseClient(BaseClient):
     """
     This is the primary class for interacting with Cloud Databases.
@@ -751,6 +758,9 @@ class CloudDatabaseClient(BaseClient):
         self._backup_manager = CloudDatabaseBackupManager(self,
                 resource_class=CloudDatabaseBackup, response_key="backup",
                 uri_base="backups")
+        self._ha_manager = CloudDatabaseHAManager(self,
+                resource_class=CloudDatabaseHAInstance, response_key="ha_instance",
+                uri_base="ha")
 
 
     @assure_instance
@@ -983,3 +993,17 @@ class CloudDatabaseClient(BaseClient):
         instance, as well as a flavor and size (in GB) for the instance.
         """
         return self._manager.restore_backup(backup, name, flavor, volume)
+
+    def create_ha(self, name, type, version, replica_source, replicas):
+        """
+        Creates a new highly available database instance. The name of the HA
+        instance, the database type and version, a replica source, and a
+        list of replicas must be specified.
+        """
+        return self._ha_manager.create(name, type, version, replica_source, replicas)
+
+    def list_ha(self):
+        """
+        Lists all high availability instances
+        """
+        return self._ha_manager.list()
