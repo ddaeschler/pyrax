@@ -384,6 +384,7 @@ class CloudDatabaseHAInstance(BaseResource):
     def list_acls(self):
         return self._acl_manager.list()
 
+
 class CloudDatabaseSpec(object):
     """
     This class holds information on the type of cloud database to be created
