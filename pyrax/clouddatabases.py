@@ -25,6 +25,7 @@ import pyrax.exceptions as exc
 from pyrax.manager import BaseManager
 from pyrax.resource import BaseResource
 import pyrax.utils as utils
+from six.moves import urllib
 
 
 def assure_instance(fnc):
@@ -76,52 +77,6 @@ class CloudDatabaseVolume(object):
         """
         return getattr(self, att)
 
-class CloudDatabaseSpec(object):
-    """
-    This class holds information on the type of cloud database to be created
-    during an HA create operation
-    """
-    def __init__(self, name, volume, flavor):
-        self.name = name
-        self.volume = volume
-        self.flavor = flavor
-
-class CloudDatabaseHAManager(BaseManager):
-    def _create_body(self, name, type, version, replica_source, replicas):
-        """
-        Creates a new highly available database instance
-        """
-        source_flavor_ref = self.api._get_flavor_ref(replica_source.flavor)
-
-        body = {"ha": {
-                "name": name,
-                "replica_source": [
-                    {
-                        "volume": {
-                            "size": replica_source.volume
-                        },
-                        "flavorRef": source_flavor_ref,
-                        "name": replica_source.name
-                    }
-                ],
-                "replicas": []
-                }}
-
-        for replica in replicas:
-            replica_flavor_ref = self.api._get_flavor_ref(replica.flavor)
-            body['ha']['replicas'].append(
-                {
-                    "volume": {
-                        "size": replica.volume
-                    },
-                    "flavorRef": replica_flavor_ref,
-                    "name": replica.name
-                }
-            )
-
-        check_type_and_version(body['ha'], type, version)
-
-        return body
 
 class CloudDatabaseManager(BaseManager):
     """
@@ -389,6 +344,27 @@ class CloudDatabaseBackupManager(BaseManager):
         return self.api._manager._list_backups_for_instance(instance, limit=limit,
                                                             marker=marker)
 
+class CloudDatabaseHAInstanceACL(BaseResource):
+    """
+    This class represents an HA MySQL ACL
+    """
+    def __init__(self, *args, **kwargs):
+        super(CloudDatabaseHAInstanceACL, self).__init__(*args, **kwargs)
+
+    def delete(self):
+        """This class doesn't have an 'id', so pass the address."""
+        self.manager.delete(urllib.parse.quote(self.address, safe=''))
+
+
+class CloudDatabaseHAInstanceACLManager(BaseManager):
+    """
+    This class manages ACLs for HA instances
+    """
+    def _create_body(self, name, address):
+        body = {"address": address}
+
+        return body
+
 
 class CloudDatabaseHAInstance(BaseResource):
     """
@@ -396,6 +372,65 @@ class CloudDatabaseHAInstance(BaseResource):
     """
     def __init__(self, *args, **kwargs):
         super(CloudDatabaseHAInstance, self).__init__(*args, **kwargs)
+
+        self._acl_manager = CloudDatabaseHAInstanceACLManager(self.manager.api,
+                resource_class=CloudDatabaseHAInstanceACL,
+                response_key="acl",
+                uri_base="ha/%s/acls" % self.id)
+
+    def add_acl(self, address):
+        self._acl_manager.create(None, address, return_none=True)
+
+    def list_acls(self):
+        return self._acl_manager.list()
+
+class CloudDatabaseSpec(object):
+    """
+    This class holds information on the type of cloud database to be created
+    during an HA create operation
+    """
+    def __init__(self, name, volume, flavor):
+        self.name = name
+        self.volume = volume
+        self.flavor = flavor
+
+
+class CloudDatabaseHAManager(BaseManager):
+    def _create_body(self, name, type, version, replica_source, replicas):
+        """
+        Creates a new highly available database instance
+        """
+        source_flavor_ref = self.api._get_flavor_ref(replica_source.flavor)
+
+        body = {"ha": {
+                "name": name,
+                "replica_source": [
+                    {
+                        "volume": {
+                            "size": replica_source.volume
+                        },
+                        "flavorRef": source_flavor_ref,
+                        "name": replica_source.name
+                    }
+                ],
+                "replicas": []
+                }}
+
+        for replica in replicas:
+            replica_flavor_ref = self.api._get_flavor_ref(replica.flavor)
+            body['ha']['replicas'].append(
+                {
+                    "volume": {
+                        "size": replica.volume
+                    },
+                    "flavorRef": replica_flavor_ref,
+                    "name": replica.name
+                }
+            )
+
+        check_type_and_version(body['ha'], type, version)
+
+        return body
 
 
 class CloudDatabaseInstance(BaseResource):
